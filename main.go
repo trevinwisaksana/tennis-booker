@@ -576,14 +576,30 @@ func (c *client) attempt(release time.Time, token string, prebuilt map[string]*h
 		detail: fmt.Sprintf("process_booking sent for %s %s %s; could not auto-verify, check %s", courtLabel(court), date, c.cfg.timeRange(), p)}
 }
 
-// verifyBody looks for the target date (in a few formats) and start time.
+var (
+	tagRe   = regexp.MustCompile(`(?s)<(script|style)[^>]*>.*?</(script|style)>|<[^>]+>`)
+	rangeRe = regexp.MustCompile(`\d{2}:\d{2} - \d{2}:\d{2}`)
+)
+
+// verifyBody checks the booking list: each entry shows "Rab, 30 Sep 2026"
+// followed by the court and the slot, e.g. "06:00 - 07:00". The first time
+// range after the date must be ours, so a neighbouring booking can't match.
 func verifyBody(body, date, start string) bool {
-	d, _ := time.Parse("2006-01-02", date)
-	forms := []string{date, d.Format("02-01-2006"), d.Format("02/01/2006"), d.Format("2 January 2006"), d.Format("02 Jan 2006"), d.Format("2 Jan 2006")}
-	for _, f := range forms {
-		if i := strings.Index(body, f); i >= 0 {
-			lo, hi := max(0, i-2000), min(len(body), i+2000)
-			if strings.Contains(body[lo:hi], start) {
+	d, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return false
+	}
+	st, _ := time.Parse("15:04", start)
+	want := st.Format("15:04") + " - " + st.Add(time.Hour).Format("15:04")
+	text := html.UnescapeString(tagRe.ReplaceAllString(body, "\n"))
+	for _, f := range []string{d.Format("02 Jan 2006"), d.Format("2 Jan 2006"), date} {
+		for off := 0; ; {
+			k := strings.Index(text[off:], f)
+			if k < 0 {
+				break
+			}
+			off += k + len(f)
+			if r := rangeRe.FindString(text[off:]); r == want {
 				return true
 			}
 		}

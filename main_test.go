@@ -177,3 +177,20 @@ func TestPasswordLogin(t *testing.T) {
 		t.Fatalf("want login rejected, got %v", err)
 	}
 }
+
+func TestVerifyBody(t *testing.T) {
+	// Shape of the real /booking list.
+	page := `<div>8EZ19A</div><p>Kam, 24 Sep 2026 23:00</p><p>Hari dan Tanggal</p><p>Sen, 28 Sep 2026</p>
+		<p>Lapangan</p><p>Jam</p><p>Tennis Indoor 3</p><p>06:00 - 07:00</p>
+		<div>XYZ</div><p>Sab, 26 Sep 2026 23:00</p><p>Hari dan Tanggal</p><p>Rab, 30 Sep 2026</p>
+		<p>Lapangan</p><p>Jam</p><p>Tennis Indoor 2</p><p>07:00 - 08:00</p>`
+	if !verifyBody(page, "2026-09-30", "07:00") {
+		t.Fatal("should find 30 Sep 07:00")
+	}
+	if verifyBody(page, "2026-09-30", "06:00") {
+		t.Fatal("30 Sep 06:00 not booked; neighbouring 06:00 entry must not match")
+	}
+	if verifyBody(page, "2026-09-29", "06:00") {
+		t.Fatal("29 Sep not booked")
+	}
+}
