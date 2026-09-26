@@ -67,17 +67,21 @@ running() { [[ -f "$(pid_of "$1")" ]] && kill -0 "$(cat "$(pid_of "$1")")" 2>/de
 case "${1:-}" in
   check) check ;;
   selftest)
-    build; check
+    build; check || echo "(continuing with the accounts that are configured)"
     rc=0
     for a in "${ACCOUNTS[@]}"; do BOOKER_SELFTEST=1 launch "$a" 1 || rc=1; done
     exit $rc ;;
   start)
-    build; check
+    build; check || echo "(continuing with the accounts that are configured)"
     for a in "${ACCOUNTS[@]}"; do
+      if [[ -z "$(cookie_env "$a")" && ! -f "${FILE[$a]}" && ( -z "$(email_env "$a")" || -z "$(pass_env "$a")" ) ]]; then
+        echo "account $a: no credentials, skipping"; continue
+      fi
       if running "$a"; then echo "account $a already running (pid $(cat "$(pid_of "$a")"))"; continue; fi
       launch "$a" 0
     done
     for a in "${ACCOUNTS[@]}"; do
+      running "$a" || [[ -f "$(log_of "$a")" ]] || continue
       for _ in $(seq 60); do grep -q "armed:" "$(log_of "$a")" 2>/dev/null && break; sleep 1; done
       if grep -q "armed:" "$(log_of "$a")"; then grep "armed:" "$(log_of "$a")" | tail -1
       else echo "account $a NOT armed; tail of $(log_of "$a"):"; tail -5 "$(log_of "$a")"; exit 1; fi
@@ -86,6 +90,9 @@ case "${1:-}" in
     for a in "${ACCOUNTS[@]}"; do running "$a" && kill "$(cat "$(pid_of "$a")")" && echo "stopped $a"; rm -f "$(pid_of "$a")"; done ;;
   status)
     for a in "${ACCOUNTS[@]}"; do
+      if [[ -z "$(cookie_env "$a")" && ! -f "${FILE[$a]}" && ( -z "$(email_env "$a")" || -z "$(pass_env "$a")" ) ]]; then
+        echo "account $a: no credentials, skipping"; continue
+      fi
       if running "$a"; then echo "account $a running (pid $(cat "$(pid_of "$a")"))"; else echo "account $a not running"; fi
       tail -2 "$(log_of "$a")" 2>/dev/null || true
     done ;;
