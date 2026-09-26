@@ -1,0 +1,5 @@
+booker
+cookie*.txt
+*.log
+*.html
+.booker-*.pid
