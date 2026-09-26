@@ -194,3 +194,61 @@ func TestVerifyBody(t *testing.T) {
 		t.Fatal("29 Sep not booked")
 	}
 }
+
+// sharedSessionSite keeps the pending booking in the (single) server session,
+// like Laravel does between /booking/confirmation and process_booking.
+func sharedSessionSite(t *testing.T, booked *[]string, mu *sync.Mutex) http.Handler {
+	var pending string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/booking", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprintf(w, `<meta name="csrf-token" content="tok123">%s`, strings.Join(*booked, "\n"))
+	})
+	mux.HandleFunc("/booking/confirmation", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		mu.Lock()
+		pending = fmt.Sprintf("<p>Rab, 30 Sep 2026</p><p>Indoor</p><p>%s</p>", strings.Trim(r.Form.Get("input_time"), `[]"`))
+		mu.Unlock()
+		fmt.Fprint(w, `Kode Booking <form action="/booking/process_booking"></form>`)
+	})
+	mux.HandleFunc("/booking/process_booking", func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(150 * time.Millisecond) // widen the race window
+		mu.Lock()
+		*booked = append(*booked, pending)
+		mu.Unlock()
+		http.Redirect(w, r, "/booking", http.StatusFound)
+	})
+	return mux
+}
+
+func TestSharedSessionSerialised(t *testing.T) {
+	var booked []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(sharedSessionSite(t, &booked, &mu))
+	defer srv.Close()
+	baseURL = srv.URL
+	lock := t.TempDir() + "/lock"
+	fire := time.Now().Add(2 * time.Second).Truncate(time.Second).Add(time.Second)
+
+	codes := make([]int, 2)
+	var wg sync.WaitGroup
+	for i, start := range []string{"06:00", "07:00"} {
+		wg.Add(1)
+		go func(i int, start string) {
+			defer wg.Done()
+			cfg := &config{label: start, cookieRaw: "saraga_indonesia_v2_session=shared", startTime: start,
+				courts: []string{"372"}, targetDate: "2026-09-30", fireAt: fire, oneshot: true,
+				retryFor: 5 * time.Second, logDir: t.TempDir(), lockFile: lock}
+			c := newClient(cfg)
+			c.loadCookies()
+			codes[i] = run(c)
+		}(i, start)
+	}
+	wg.Wait()
+	all := strings.Join(booked, "\n")
+	if codes[0] != 0 || codes[1] != 0 || !strings.Contains(all, "06:00 - 07:00") || !strings.Contains(all, "07:00 - 08:00") {
+		t.Fatalf("codes=%v booked=%q", codes, booked)
+	}
+}

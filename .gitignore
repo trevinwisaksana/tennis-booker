@@ -3,3 +3,4 @@ cookie*.txt
 *.log
 *.html
 .booker-*.pid
+.booker.lock

@@ -45,6 +45,8 @@ launch() {  # launch <account> <foreground:0|1>
   local a=$1 fg=$2
   (
     export BOOKER_LABEL="$a" BOOKER_START_TIME="${START[$a]}" BOOKER_COURT_IDS="$COURTS"
+    # Both accounts may share one server session; serialise their booking flows.
+    export BOOKER_LOCK_FILE="$PWD/.booker.lock"
     c=$(cookie_env "$a")
     if [[ -n "$c" ]]; then export BOOKER_COOKIE="$c"; unset BOOKER_COOKIE_FILE || true
     else export BOOKER_COOKIE_FILE="${FILE[$a]}"; unset BOOKER_COOKIE || true; fi

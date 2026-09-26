@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -56,6 +57,7 @@ type config struct {
 	fireAt     time.Time
 	retryFor   time.Duration
 	logDir     string
+	lockFile   string
 }
 
 func loadConfig() (*config, error) {
@@ -75,6 +77,7 @@ func loadConfig() (*config, error) {
 		targetDate: os.Getenv("BOOKER_TARGET_DATE"),
 		retryFor:   30 * time.Second,
 		logDir:     envOr("BOOKER_LOG_DIR", "."),
+		lockFile:   os.Getenv("BOOKER_LOCK_FILE"),
 	}
 	for _, id := range strings.Split(envOr("BOOKER_COURT_IDS", "372,373"), ",") {
 		if id = strings.TrimSpace(id); id != "" {
@@ -494,10 +497,32 @@ func (c *client) save(name, body string) string {
 	return p
 }
 
+// lock serialises confirmation -> process_booking -> verify across daemons
+// that may share one server session: the pending booking lives in the
+// session, so interleaved flows could commit the other daemon's slot.
+func (c *client) lock() func() {
+	if c.cfg.lockFile == "" {
+		return func() {}
+	}
+	f, err := os.OpenFile(c.cfg.lockFile, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		log.Printf("lock open: %v (continuing unlocked)", err)
+		return func() {}
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		log.Printf("lock: %v (continuing unlocked)", err)
+	}
+	return func() {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}
+}
+
 type outcome struct {
-	ok     bool
-	court  string
-	detail string
+	ok         bool
+	unverified bool
+	court      string
+	detail     string
 }
 
 func (c *client) attempt(release time.Time, token string, prebuilt map[string]*http.Request) outcome {
@@ -505,6 +530,8 @@ func (c *client) attempt(release time.Time, token string, prebuilt map[string]*h
 	deadline := release.Add(c.cfg.retryFor)
 	var confirmBody, court string
 	savedMiss := map[string]bool{}
+	held := func() {}
+	defer func() { held() }()
 
 	for round := 0; confirmBody == ""; round++ {
 		for _, id := range c.cfg.courts {
@@ -516,9 +543,11 @@ func (c *client) attempt(release time.Time, token string, prebuilt map[string]*h
 				req, _ = http.NewRequest("POST", baseURL+"/booking/confirmation", strings.NewReader(f.Encode()))
 				c.prepare(req, true)
 			}
+			unlock := c.lock()
 			sent := c.serverNow()
 			r, err := c.send(req)
 			if err != nil {
+				unlock()
 				log.Printf("confirmation court=%s err=%v", courtLabel(id), err)
 				continue
 			}
@@ -526,6 +555,7 @@ func (c *client) attempt(release time.Time, token string, prebuilt map[string]*h
 				courtLabel(id), sent.In(wib).Format("15:04:05.000"), r.status, r.location, strings.Contains(r.body, "Kode Booking"))
 			if r.status == 200 && strings.Contains(r.body, "Kode Booking") {
 				confirmBody, court = r.body, id
+				held = unlock // held through process_booking and verify
 				c.save("confirmation", r.body)
 				break
 			}
@@ -534,6 +564,7 @@ func (c *client) attempt(release time.Time, token string, prebuilt map[string]*h
 					token = t
 				}
 			}
+			unlock()
 			if !savedMiss[id] {
 				savedMiss[id] = true
 				c.save("confirmation-miss-"+id, fmt.Sprintf("<!-- status=%d location=%s -->\n%s", r.status, r.location, r.body))
@@ -572,8 +603,8 @@ func (c *client) attempt(release time.Time, token string, prebuilt map[string]*h
 	if found {
 		return outcome{ok: true, court: court, detail: fmt.Sprintf("booked %s %s %s (verified on /booking)", courtLabel(court), date, c.cfg.timeRange())}
 	}
-	return outcome{ok: err == nil && r.status < 400, court: court,
-		detail: fmt.Sprintf("process_booking sent for %s %s %s; could not auto-verify, check %s", courtLabel(court), date, c.cfg.timeRange(), p)}
+	return outcome{unverified: true, court: court,
+		detail: fmt.Sprintf("process_booking sent for %s %s %s but the slot is NOT on /booking; check %s", courtLabel(court), date, c.cfg.timeRange(), p)}
 }
 
 var (
@@ -783,6 +814,8 @@ func run(c *client) int {
 		}
 		if out.ok {
 			c.notify("RESULT ok", out.detail)
+		} else if out.unverified {
+			c.notify("RESULT UNVERIFIED", out.detail)
 		} else {
 			c.notify("RESULT FAILED", out.detail)
 		}
