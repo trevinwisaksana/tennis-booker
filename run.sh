@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Usage: ./run.sh check|selftest|start|stop|status|wait
 #
-# Cookies: BOOKER_COOKIE_A / BOOKER_COOKIE_B (raw `cookie:` header, e.g. from
-# cloud environment variables) take precedence over cookie.txt / cookie2.txt.
+# Auth per account (X = A or B), any of:
+#   BOOKER_EMAIL_X + BOOKER_PASSWORD_X  site email/password login (re-logs in when the session dies)
+#   BOOKER_COOKIE_X                      raw `cookie:` header from DevTools
+#   cookie.txt / cookie2.txt             same, as files
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -12,6 +14,8 @@ declare -A FILE=([A]=cookie.txt [B]=cookie2.txt)
 COURTS=${BOOKER_COURT_IDS:-372,373}
 
 cookie_env() { local v="BOOKER_COOKIE_$1"; printf '%s' "${!v:-}"; }
+email_env() { local v="BOOKER_EMAIL_$1"; printf '%s' "${!v:-}"; }
+pass_env() { local v="BOOKER_PASSWORD_$1"; printf '%s' "${!v:-}"; }
 log_of() { echo "booker-$(echo "$1" | tr 'A-Z' 'a-z').log"; }
 pid_of() { echo ".booker-$(echo "$1" | tr 'A-Z' 'a-z').pid"; }
 
@@ -21,9 +25,13 @@ check() {
   local ok=0
   for a in "${ACCOUNTS[@]}"; do
     local src raw
+    if [[ -n "$(email_env "$a")" && -n "$(pass_env "$a")" ]]; then
+      echo "account $a: email/password login configured"
+    fi
     if [[ -n "$(cookie_env "$a")" ]]; then src="env BOOKER_COOKIE_$a"; raw=$(cookie_env "$a")
     elif [[ -f "${FILE[$a]}" ]]; then src="${FILE[$a]}"; raw=$(cat "${FILE[$a]}")
-    else echo "account $a: MISSING (no BOOKER_COOKIE_$a, no ${FILE[$a]})"; ok=1; continue; fi
+    elif [[ -n "$(email_env "$a")" && -n "$(pass_env "$a")" ]]; then continue
+    else echo "account $a: MISSING (no BOOKER_EMAIL_$a/BOOKER_PASSWORD_$a, BOOKER_COOKIE_$a or ${FILE[$a]})"; ok=1; continue; fi
     if grep -qE '(^|[; ])[A-Za-z0-9_]*_session=' <<<"$raw"; then
       echo "account $a: $src contains a *_session cookie"
     else
@@ -40,7 +48,9 @@ launch() {  # launch <account> <foreground:0|1>
     c=$(cookie_env "$a")
     if [[ -n "$c" ]]; then export BOOKER_COOKIE="$c"; unset BOOKER_COOKIE_FILE || true
     else export BOOKER_COOKIE_FILE="${FILE[$a]}"; unset BOOKER_COOKIE || true; fi
-    unset BOOKER_COOKIE_A BOOKER_COOKIE_B
+    [[ -f "${FILE[$a]}" || -n "$c" ]] || unset BOOKER_COOKIE_FILE
+    export BOOKER_EMAIL="$(email_env "$a")" BOOKER_PASSWORD="$(pass_env "$a")"
+    unset BOOKER_COOKIE_A BOOKER_COOKIE_B BOOKER_EMAIL_A BOOKER_EMAIL_B BOOKER_PASSWORD_A BOOKER_PASSWORD_B
     wrap=()
     command -v caffeinate >/dev/null && wrap=(caffeinate -dis)
     if [[ $fg == 1 ]]; then

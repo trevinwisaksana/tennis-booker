@@ -42,6 +42,8 @@ type config struct {
 	label      string
 	cookieFile string
 	cookieRaw  string
+	email      string
+	password   string
 	startTime  string
 	courts     []string
 	smtpUser   string
@@ -61,6 +63,8 @@ func loadConfig() (*config, error) {
 		label:      envOr("BOOKER_LABEL", "booker"),
 		cookieFile: os.Getenv("BOOKER_COOKIE_FILE"),
 		cookieRaw:  strings.TrimSpace(os.Getenv("BOOKER_COOKIE")),
+		email:      strings.TrimSpace(os.Getenv("BOOKER_EMAIL")),
+		password:   os.Getenv("BOOKER_PASSWORD"),
 		startTime:  envOr("BOOKER_START_TIME", "06:00"),
 		smtpUser:   os.Getenv("BOOKER_SMTP_USER"),
 		smtpPass:   os.Getenv("BOOKER_SMTP_PASS"),
@@ -102,8 +106,8 @@ func loadConfig() (*config, error) {
 		}
 		c.retryFor = d
 	}
-	if c.cookieRaw == "" && c.cookieFile == "" {
-		return nil, errors.New("set BOOKER_COOKIE or BOOKER_COOKIE_FILE")
+	if c.cookieRaw == "" && c.cookieFile == "" && (c.email == "" || c.password == "") {
+		return nil, errors.New("set BOOKER_COOKIE, BOOKER_COOKIE_FILE, or BOOKER_EMAIL + BOOKER_PASSWORD")
 	}
 	return c, nil
 }
@@ -180,6 +184,59 @@ func hasSessionCookie(raw string) bool {
 		}
 	}
 	return false
+}
+
+func (c *client) hasLogin() bool { return c.cfg.email != "" && c.cfg.password != "" }
+
+func (c *client) hasCookieSource() bool { return c.cfg.cookieRaw != "" || c.cfg.cookieFile != "" }
+
+// login signs in with the site's email/password form, replacing the jar.
+func (c *client) login() error {
+	c.mu.Lock()
+	c.jar, c.order = map[string]string{}, nil
+	c.mu.Unlock()
+	r, err := c.do("GET", "/login", nil)
+	if err != nil {
+		return fmt.Errorf("GET /login: %w", err)
+	}
+	m := csrfRe.FindStringSubmatch(r.body)
+	if m == nil {
+		return errors.New("no csrf-token on /login")
+	}
+	req, _ := http.NewRequest("POST", baseURL+"/login", strings.NewReader(url.Values{
+		"_token": {m[1]}, "email": {c.cfg.email}, "password": {c.cfg.password}, "remember": {"on"},
+	}.Encode()))
+	c.prepare(req, true)
+	req.Header.Set("Referer", baseURL+"/login")
+	r, err = c.send(req)
+	if err != nil {
+		return fmt.Errorf("POST /login: %w", err)
+	}
+	if r.status < 300 || r.status >= 400 || strings.HasSuffix(strings.TrimRight(r.location, "/"), "/login") {
+		return fmt.Errorf("login rejected (status %d, location %q): check email/password", r.status, r.location)
+	}
+	if _, _, err := c.getBooking(); err != nil {
+		return fmt.Errorf("after login: %w", err)
+	}
+	log.Printf("logged in as %s", c.cfg.email)
+	return nil
+}
+
+// establish loads the cookie source, falling back to a password login.
+func (c *client) establish() error {
+	if c.hasCookieSource() {
+		err := c.loadCookies()
+		if err == nil {
+			if _, _, err = c.getBooking(); err == nil {
+				return nil
+			}
+		}
+		if !c.hasLogin() {
+			return err
+		}
+		log.Printf("cookie unusable (%v), logging in with password", err)
+	}
+	return c.login()
 }
 
 func (c *client) loadCookies() error {
@@ -311,9 +368,9 @@ func (c *client) getBooking() (*result, string, error) {
 func (c *client) touch() (string, error) {
 	_, tok, err := c.getBooking()
 	if errors.Is(err, errDead) {
-		log.Printf("session dead, re-reading cookie source")
-		if lerr := c.loadCookies(); lerr != nil {
-			return "", fmt.Errorf("%w; reload failed: %v", err, lerr)
+		log.Printf("session dead, re-establishing")
+		if lerr := c.establish(); lerr != nil {
+			return "", fmt.Errorf("%w; re-establish failed: %v", err, lerr)
 		}
 		_, tok, err = c.getBooking()
 	}
@@ -583,8 +640,13 @@ func main() {
 	}
 	log.SetPrefix("[" + cfg.label + "] ")
 	c := newClient(cfg)
-	if err := c.loadCookies(); err != nil {
-		log.Fatalf("cookies: %v", err)
+	if err := c.establish(); err != nil {
+		if cfg.selftest {
+			log.Printf("session: %v", err)
+		} else {
+			// Keep running: touches retry and notify until the release.
+			log.Printf("session not established yet: %v", err)
+		}
 	}
 	if err := c.syncClock(); err != nil {
 		log.Printf("clock sync failed, using local clock: %v", err)

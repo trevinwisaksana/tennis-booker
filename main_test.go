@@ -25,6 +25,19 @@ func (f *fakeSite) handler(t *testing.T) http.Handler {
 		ck, err := r.Cookie("saraga_indonesia_v2_session")
 		return err == nil && ck.Value == "good"
 	}
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			fmt.Fprint(w, `<meta name="csrf-token" content="logintok">`)
+			return
+		}
+		r.ParseForm()
+		if r.Form.Get("_token") == "logintok" && r.Form.Get("email") == "a@example.com" && r.Form.Get("password") == "pw" {
+			http.SetCookie(w, &http.Cookie{Name: "saraga_indonesia_v2_session", Value: "good", Path: "/"})
+			http.Redirect(w, r, "/home", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, "/login", http.StatusFound)
+	})
 	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") })
 	mux.HandleFunc("/booking", func(w http.ResponseWriter, r *http.Request) {
 		if !loggedIn(r) {
@@ -140,5 +153,27 @@ func TestCookieCheck(t *testing.T) {
 	}
 	if hasSessionCookie("XSRF-TOKEN=z") {
 		t.Fatal("should reject cookie without session")
+	}
+}
+
+func TestPasswordLogin(t *testing.T) {
+	site := &fakeSite{}
+	srv := httptest.NewServer(site.handler(t))
+	defer srv.Close()
+	baseURL = srv.URL
+
+	// Dead cookie falls back to password login.
+	cfg := &config{label: "T", cookieRaw: "saraga_indonesia_v2_session=stale", email: "a@example.com", password: "pw", startTime: "06:00", courts: []string{"372"}, logDir: t.TempDir()}
+	c := newClient(cfg)
+	if err := c.establish(); err != nil {
+		t.Fatalf("establish: %v", err)
+	}
+	if selftest(c) != 0 {
+		t.Fatal("selftest should pass after login")
+	}
+
+	bad := newClient(&config{label: "T", email: "a@example.com", password: "wrong", startTime: "06:00", courts: []string{"372"}})
+	if err := bad.establish(); err == nil || !strings.Contains(err.Error(), "login rejected") {
+		t.Fatalf("want login rejected, got %v", err)
 	}
 }

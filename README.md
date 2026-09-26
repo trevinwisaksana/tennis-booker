@@ -13,7 +13,14 @@ Account A books 06:00-07:00, account B 07:00-08:00, both trying courts `372,373`
 (Indoor 2, then Indoor 3). Logs: `booker-a.log`, `booker-b.log`; response pages
 are saved as `a-*.html` / `b-*.html` next to them.
 
-## Cookies
+## Auth
+
+Preferred: the site's own email/password login (the /login form). Set
+`BOOKER_EMAIL_A` / `BOOKER_PASSWORD_A` and `BOOKER_EMAIL_B` / `BOOKER_PASSWORD_B`.
+Google-only accounts can set a site password via "Forgot password" on /login.
+The daemon logs in at start and again whenever the session dies.
+
+Alternatively, cookies:
 
 The site's session cookie is `saraga_indonesia_v2_session` (8-day lifetime), not
 `laravel_session`. Copy the whole `cookie:` request header from DevTools
@@ -27,7 +34,7 @@ Don't log out in the browser afterwards; that invalidates the copied session.
 
 ## Env
 
-`BOOKER_COOKIE` or `BOOKER_COOKIE_FILE`, `BOOKER_START_TIME`, `BOOKER_COURT_IDS`,
+`BOOKER_EMAIL`+`BOOKER_PASSWORD`, `BOOKER_COOKIE` or `BOOKER_COOKIE_FILE`, `BOOKER_START_TIME`, `BOOKER_COURT_IDS`,
 `BOOKER_LABEL`, `BOOKER_SMTP_USER`/`BOOKER_SMTP_PASS`/`BOOKER_EMAIL_TO`,
 `BOOKER_SELFTEST=1`, `BOOKER_DRY_RUN=1`, `BOOKER_ONESHOT=1` (exit after one release),
 `BOOKER_TARGET_DATE=YYYY-MM-DD`, `BOOKER_FIRE_AT=<RFC3339>` (testing),
