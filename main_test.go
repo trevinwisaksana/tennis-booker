@@ -74,7 +74,7 @@ func (f *fakeSite) handler(t *testing.T) http.Handler {
 		if r.Form.Get("booking_ref") != "abc&1" || r.Form.Get("agreements") != "confirm" || r.Form.Get("grand_total") != "1" {
 			t.Errorf("bad process form: %v", r.Form)
 		}
-		f.booked = "Indoor 3 30 September 2026 06:00 - 07:00"
+		f.booked = "<p>Rab, 30 Sep 2026</p><p>Tennis Indoor 3</p><p>06:00 - 07:00</p>"
 		http.Redirect(w, r, "/booking", http.StatusFound)
 	})
 	return mux
