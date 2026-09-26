@@ -545,7 +545,10 @@ func (c *client) attempt(release time.Time, token string, prebuilt map[string]*h
 		if c.serverNow().After(deadline) {
 			return outcome{detail: fmt.Sprintf("no court confirmed for %s %s after %d rounds", date, c.cfg.timeRange(), round+1)}
 		}
-		time.Sleep(250 * time.Millisecond)
+		// Retry back-to-back right after release; back off once it's clearly contested.
+		if c.serverNow().Sub(release) > 3*time.Second {
+			time.Sleep(250 * time.Millisecond)
+		}
 	}
 
 	pf := processForm(confirmBody, token)
