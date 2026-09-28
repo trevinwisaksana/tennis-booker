@@ -252,3 +252,14 @@ func TestSharedSessionSerialised(t *testing.T) {
 		t.Fatalf("codes=%v booked=%q", codes, booked)
 	}
 }
+
+func TestVerifyBodyIndonesianMonth(t *testing.T) {
+	// Real /booking entry from the 2 Oct run.
+	page := `<p>Hari dan Tanggal</p><p>Jum, 02 Okt 2026</p><p>Lapangan</p><p>Jam</p><p>Tennis Indoor 2</p><p>06:00 - 07:00</p>`
+	if !verifyBody(page, "2026-10-02", "06:00") {
+		t.Fatal("should match 02 Okt 2026")
+	}
+	if verifyBody(page, "2026-10-02", "07:00") || verifyBody(page, "2026-10-03", "06:00") {
+		t.Fatal("false positive")
+	}
+}

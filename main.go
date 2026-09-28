@@ -607,6 +607,10 @@ func (c *client) attempt(release time.Time, token string, prebuilt map[string]*h
 		detail: fmt.Sprintf("process_booking sent for %s %s %s but the slot is NOT on /booking; check %s", courtLabel(court), date, c.cfg.timeRange(), p)}
 }
 
+var idMonths = map[time.Month][]string{
+	time.May: {"Mei"}, time.August: {"Agu", "Agt"}, time.October: {"Okt"}, time.December: {"Des"},
+}
+
 var (
 	tagRe   = regexp.MustCompile(`(?s)<(script|style)[^>]*>.*?</(script|style)>|<[^>]+>`)
 	rangeRe = regexp.MustCompile(`\d{2}:\d{2} - \d{2}:\d{2}`)
@@ -623,7 +627,14 @@ func verifyBody(body, date, start string) bool {
 	st, _ := time.Parse("15:04", start)
 	want := st.Format("15:04") + " - " + st.Add(time.Hour).Format("15:04")
 	text := html.UnescapeString(tagRe.ReplaceAllString(body, "\n"))
-	for _, f := range []string{d.Format("02 Jan 2006"), d.Format("2 Jan 2006"), date} {
+	forms := []string{d.Format("02 Jan 2006"), d.Format("2 Jan 2006"), date}
+	// The site writes months in Indonesian (Mei, Agu/Agt, Okt, Des).
+	if id, ok := idMonths[d.Month()]; ok {
+		for _, m := range id {
+			forms = append(forms, fmt.Sprintf("%02d %s %d", d.Day(), m, d.Year()), fmt.Sprintf("%d %s %d", d.Day(), m, d.Year()))
+		}
+	}
+	for _, f := range forms {
 		for off := 0; ; {
 			k := strings.Index(text[off:], f)
 			if k < 0 {
