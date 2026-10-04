@@ -753,6 +753,16 @@ func run(c *client) int {
 			cfg.target(release), cfg.timeRange(), cfg.courtList(),
 			release.In(wib).Format("Mon 2006-01-02 15:04:05.000 MST"), c.offset.Round(time.Millisecond), cfg.dryRun)
 
+		// Don't spend a credit on a slot this account already holds.
+		if r, _, err := c.getBooking(); err == nil && verifyBody(r.body, cfg.target(release), cfg.startTime) {
+			c.notify("SKIPPED", fmt.Sprintf("%s %s already booked on /booking", cfg.target(release), cfg.timeRange()))
+			if cfg.oneshot || !cfg.fireAt.IsZero() {
+				return 0
+			}
+			time.Sleep(time.Until(release.Add(time.Minute)))
+			continue
+		}
+
 		// Phase 1: touch every 10 minutes until T-3m.
 		deadNotified := false
 		for c.serverNow().Before(release.Add(-3 * time.Minute)) {

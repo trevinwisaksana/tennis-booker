@@ -263,3 +263,17 @@ func TestVerifyBodyIndonesianMonth(t *testing.T) {
 		t.Fatal("false positive")
 	}
 }
+
+func TestSkipIfAlreadyBooked(t *testing.T) {
+	site := &fakeSite{booked: "<p>Rab, 30 Sep 2026</p><p>Tennis Indoor 2</p><p>06:00 - 07:00</p>"}
+	srv := httptest.NewServer(site.handler(t))
+	defer srv.Close()
+	baseURL = srv.URL
+	cfg := &config{label: "T", cookieRaw: "saraga_indonesia_v2_session=good", startTime: "06:00",
+		courts: []string{"372"}, targetDate: "2026-09-30", fireAt: time.Now().Add(time.Hour), oneshot: true, logDir: t.TempDir()}
+	c := newClient(cfg)
+	c.loadCookies()
+	if code := run(c); code != 0 || len(site.confirms) != 0 {
+		t.Fatalf("expected skip without booking: code=%d confirms=%v", code, site.confirms)
+	}
+}
