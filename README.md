@@ -41,3 +41,22 @@ Don't log out in the browser afterwards; that invalidates the copied session.
 `BOOKER_RETRY_WINDOW` (default 30s of confirmation retries after release).
 
 `process_booking` is never retried; the result is verified via GET /booking.
+
+## Scheduled runs
+
+A Claude Code scheduled task, "Tennis booker (Mon/Tue/Wed/Fri/Sat 06-08)",
+runs at 05:40 WIB on Sun, Tue, Wed, Fri and Sat
+(`CRON_TZ=Asia/Jakarta 40 5 * * 0,2,3,5,6`). Each 06:00 release opens the date
+3 days ahead, so this books Wed, Fri, Sat, Mon and Tue mornings.
+
+Each run starts a fresh cloud session that clones this repo's default branch,
+then runs `./run.sh selftest` and `BOOKER_ONESHOT=1 ./run.sh start`, waits for
+the release, and reports one line per account. Credentials come from the
+environment's variables (`BOOKER_COOKIE_A` / `BOOKER_COOKIE_B`, or the
+email/password pairs), never from files or chat, so a recycled container
+loses nothing.
+
+Keep `main` as the default branch. Sessions that resume from a branch that
+doesn't exist fail to start: the first scheduled setup pointed at a `main`
+that had never been created, and it broke the first time its container was
+recycled (missed Fri 30 Oct 2026).
